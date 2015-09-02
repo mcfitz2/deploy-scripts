@@ -28,7 +28,7 @@ read_args(function (args) {
 		newrev = args[1],
 		ref = args[2];
 	if (ref.match(".*/master")) {
-		console.log("Deploying", APP, to production);
+		console.log("Deploying", APP, "to production");
 		async.series([function (callback) {
 			fs.rmrf("/apps/build/" + APP, function (err) {
 				callback(err);
