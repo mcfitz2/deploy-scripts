@@ -3,8 +3,8 @@
 var fs = require('fs.extra');
 var async = require("async");
 var spawn = require('child_process').spawn;
-
-var APP = "oauth-store";
+var path = require("path"),
+	randomstring = require("randomstring");
 
 function read_args(callback) {
 	var data = "";
@@ -27,100 +27,157 @@ read_args(function (args) {
 	var oldrev = args[0],
 		newrev = args[1],
 		ref = args[2];
+	var deploy = {};
 	if (ref.match(".*/master")) {
+		var rando = randomstring.generate(7);
 		console.log("Deploying", APP, "to production");
 		async.series([function (callback) {
-			fs.rmrf("/apps/build/" + APP, function (err) {
-				callback(err);
-			})
-		}, function (callback) {
-			fs.mkdirp("/apps/build/" + APP, function (err) {
-				callback(err);
-			})
-
-		}, function (callback) {
-			var p = spawn("sh -c \"git archive " + newrev + " | tar - x - C /apps/build/" + APP + "\"");
-			p.stdout.on('data', function (data) {
-				console.log('stdout: ' + data);
-			});
-
-			p.stderr.on('data', function (data) {
-				console.log('stderr: ' + data);
-			});
-			p.on("close", function (code) {
-				callback(code);
-			})
-
-		}, function (callback) {
-			try {
-				process.chdir("/apps/build/" + APP);
-				callback(null);
-			} catch (err) {
-				callback(err);
-			}
-		}, function (callback) {
-			var p = spawn("npm install -d");
-			p.on("close", function (code) {
-				callback(code);
-			})
-
-		}, function (callback) {
-			var p = spawn("grunt deploy");
-			p.on("close", function (code) {
-				callback(code);
-			})
-
-		}, function (callback) {
-			// 			npm prune--production
-			var p = spawn("npm prune --production");
-			p.on("close", function (code) {
-				callback(code);
-			})
-
-		}, function (callback) {
-			try {
-				process.chdir("/apps/build/");
-				callback(null);
-			} catch (err) {
-				callback(err);
-			}
-
-		}, function (callback) {
-			fs.mkdirp("/apps/deployed/.versions", function (err) {
-				callback(err);
-			})
-
-		}, function (callback) {
-			fs.rmrf("/apps/deployed/.versions/" + APP + "." + newrev, function (err) {
-				callback(err);
-			})
-
-
-		}, function (callback) {
-			fs.copyRecursive("/apps/build/" + APP, "/apps/deployed/.versions/" + APP + "." + newrev, function (err) {
-				callback(err);
-			})
-
-		}, function (callback) {
-			fs.rmrf("/apps/deployed/" + APP, function (err) {
-				callback(err);
-			})
-		}, function (callback) {
-			fs.symlink("/apps/deployed/.versions/" + APP + "." + newrev, "/apps/deployed/" + APP, function (err) {
-				callback(err);
-			})
-		}, function (callback) {
-			fs.exists("supervisord.conf", function (exists) {
-				if (exists) {
-					fs.copy("supervisord.conf", "/apps/supervisor/conf.d/" + APP + ".conf", function (err) {
+					fs.mkdirp("/tmp/" + APP + "." + rando, function (err) {
 						callback(err);
 					})
-				} else {
-					return callback(null);
+				},
+				function (callback) {
+					console.log("Checking out code into temp directory");
+					try {
+						var git = spawn("git", ["archive", newrev]);
+						var tar = spawn("tar", ["-x", "-C", "/tmp/" + rando]);
+						git.stdout.pipe(tar.stdin);
+						git.stderr.pipe(process.stderr);
+						tar.stderr.pipe(process.stderr);
+						tar.on("close", function (code) {
+							console.log("Process ended with code", code)
+							callback(code);
+						});
+					} catch (err) {
+						console.log(err);
+						callback(err);
+					}
+
+				},
+				function (callback) {
+					fs.exists(path.join("/tmp/" + rando, "deploy.json"), function (exists) {
+						if (exists) {
+							fs.readFile(path.join("/tmp/" + rando, "deploy.json"), 'utf8', function (err, data) {
+								if (err) {
+									return callback(err);
+								}
+								deploy = JSON.parse(data);
+								if (!deploy.name) {
+									return callback(true);
+								} else {
+									APP = deploy.name;
+								}
+							});
+						} else {
+							callback(true);
+						}
+					});
+				},
+				function (callback) {
+					console.log("Removing old build directory")
+					fs.rmrf("/apps/build/" + APP, function (err) {
+						callback(err);
+					})
+				},
+				function (callback) {
+					console.log("Creating new build directory");
+					fs.mkdirp("/apps/build/" + APP, function (err) {
+						callback(err);
+					})
+				},
+				function (callback) {
+					try {
+						process.chdir("/apps/build/" + APP);
+						callback(null);
+					} catch (err) {
+						callback(err);
+					}
+				},
+				function (callback) {
+					console.log("Installing dependencies");
+					var p = spawn("npm", ["install", "-d"]);
+					//p.stdout.pipe(process.stdout);
+					//p.stderr.pipe(process.stderr);
+					p.on("close", function (code) {
+						callback(code);
+					})
+
+				},
+				function (callback) {
+					console.log("Running grunt");
+					var p = spawn("grunt", ["deploy"]);
+					p.stdout.pipe(process.stdout);
+					p.stderr.pipe(process.stderr);
+					p.on("close", function (code) {
+						callback(code);
+					})
+
+				},
+				function (callback) {
+					console.log("Removing dev dependencies");
+					var p = spawn("npm", ["prune", "--production"]);
+					p.stdout.pipe(process.stdout);
+					p.stderr.pipe(process.stderr);
+					p.on("close", function (code) {
+						callback(code);
+					})
+
+				},
+				function (callback) {
+					try {
+						process.chdir("/apps/build/");
+						callback(null);
+					} catch (err) {
+						callback(err);
+					}
+
+				},
+				function (callback) {
+					fs.mkdirp("/apps/deployed/.versions", function (err) {
+						callback(err);
+					})
+
+				},
+				function (callback) {
+					fs.rmrf("/apps/deployed/.versions/" + APP + "." + newrev, function (err) {
+						callback(err);
+					})
+
+
+				},
+				function (callback) {
+					console.log("Copying built code into deploy directory");
+					fs.copyRecursive("/apps/build/" + APP, "/apps/deployed/.versions/" + APP + "." + newrev, function (err) {
+						callback(err);
+					})
+
+				},
+				function (callback) {
+					fs.rmrf("/apps/deployed/" + APP, function (err) {
+						callback(err);
+					})
+				},
+				function (callback) {
+					console.log("Linking new build")
+					fs.symlink("/apps/deployed/.versions/" + APP + "." + newrev, "/apps/deployed/" + APP, function (err) {
+						callback(err);
+					})
+				},
+				function (callback) {
+					console.log("Copying supervisord.conf to config directory");
+					fs.exists("supervisord.conf", function (exists) {
+						if (exists) {
+							fs.copy("supervisord.conf", "/apps/supervisor/conf.d/" + APP + ".conf", function (err) {
+								callback(err);
+							})
+						} else {
+							return callback(null);
+						}
+					});
 				}
+			],
+			function (err) {
+				console.log(">>> Deployed");
 			});
-		}], function (err) {
-			console.log(">>> Deployed");
-		});
 	}
 });
