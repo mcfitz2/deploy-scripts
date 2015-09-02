@@ -39,7 +39,7 @@ read_args(function (args) {
 			})
 
 		}, function (callback) {
-			var p = spawn("git archive $newrev | tar - x - C /apps/build/" + APP);
+			var p = spawn("sh -c \"git archive " + newrev + " | tar - x - C /apps/build/\"" + APP);
 			p.on("close", function (code) {
 				callback(code);
 			})
